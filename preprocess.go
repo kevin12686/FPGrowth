@@ -27,9 +27,19 @@ func preprocess(filenames ...string) map[int][]string {
 				continue
 			}
 			orderNum, _ := strconv.Atoi(val[0])
-			rlt[orderNum] = append(rlt[orderNum], val[2])
-			sort.Strings(rlt[orderNum])
+			idx := -1
+			for i, v := range rlt[orderNum]{
+				if v == val[2]{
+					idx = i
+				}
+			}
+			if idx == -1{
+				rlt[orderNum] = append(rlt[orderNum], val[2])
+			}
 		}
+	}
+	for _, val := range rlt{
+		sort.Strings(val)
 	}
 	return rlt
 }
