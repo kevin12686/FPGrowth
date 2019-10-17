@@ -1,247 +1,235 @@
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"log"
-	"math"
-	"reflect"
+	"encoding/csv"
+	"fmt"
+	"os"
 	"sort"
-	"strconv"
 )
 
-type Dataset map[int][]string
-
-type Node struct {
-	Item   *Item
-	Number int
-	Parent *Node
-	Sons   []*Node
-}
-
 type Item struct {
-	Name  string
-	Count int
-	Links []*Node
+	AttrName string
+	Value    string
+	_weight  int
 }
 
 type ItemList []*Item
 
-type SupportedData []ItemList
-
-type Patterns struct {
-	Support int
-	Item    []string
+type Data struct {
+	Tid          string
+	Items        ItemList
+	SupportCount int
 }
+
+type Dataset []*Data
+
+type Header struct {
+	ItemPtr      *Item
+	SupportCount int
+	Nodes        FPNodes
+}
+
+type HeaderTable []*Header
+
+type FPNode struct {
+	ItemPtr      *Item
+	Parent       *FPNode
+	Sons         FPNodes
+	SupportCount int
+}
+
+type FPNodes []*FPNode
 
 func (list ItemList) Len() int {
 	return len(list)
 }
 
 func (list ItemList) Less(i, j int) bool {
-	return list[i].Count < list[j].Count
+	return list[i]._weight < list[j]._weight
 }
 
 func (list ItemList) Swap(i, j int) {
 	list[i], list[j] = list[j], list[i]
 }
 
-func (list ItemList) indexByName(name string) int {
-	for i, link := range list {
-		if link.Name == name {
+func (list ItemList) Find(attrName string, value string) *Item {
+	for _, itemPtr := range list {
+		if itemPtr.AttrName == attrName && itemPtr.Value == value {
+			return itemPtr
+		}
+	}
+	return nil
+}
+
+func (list HeaderTable) Len() int {
+	return len(list)
+}
+
+func (list HeaderTable) Less(i, j int) bool {
+	return list[i].SupportCount < list[j].SupportCount
+}
+
+func (list HeaderTable) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+
+func (list HeaderTable) Find(itemPtr *Item) *Header {
+	for _, header := range list {
+		if header.ItemPtr == itemPtr {
+			return header
+		}
+	}
+	return nil
+}
+
+func (list HeaderTable) IndexOf(itemPtr *Item) int {
+	for i, header := range list {
+		if header.ItemPtr == itemPtr {
 			return i
 		}
 	}
 	return -1
 }
 
-func fpTreeCreadeNode(item *Item, parent *Node, num int) *Node {
-	return &Node{item, num, parent, []*Node{}}
-}
-
-func (rootp *Node) fpTreeLeafPath(paths *[]ItemList, curPath ...*Item) {
-	for _, node := range rootp.Sons {
-		node.fpTreeLeafPath(paths, append(curPath, rootp.Item)...)
-	}
-	if len(rootp.Sons) == 0 {
-		*paths = append(*paths, append(ItemList{}, curPath...))
-	}
-}
-
-func (rootp *Node) fpTreeInsert(list ItemList, item *Item, count int) (node *Node) {
-	for _, val := range rootp.Sons {
-		if val.Item == item {
-			node = val
-			val.Number += count
-		}
-	}
-	if node == nil {
-		node = fpTreeCreadeNode(item, rootp, count)
-		rootp.Sons = append(rootp.Sons, node)
-		item.Links = append(item.Links, node)
-	}
-	return
-}
-
-func (rootp *Node) fpTreeAppend(list ItemList, count bool, items ...*Item) {
-	cur := rootp
-	for _, item := range items {
-		if count {
-			cur = cur.fpTreeInsert(list, item, 1)
-		} else {
-			cur = cur.fpTreeInsert(list, item, item.Count)
-		}
-	}
-}
-
-func removeItem(ds Dataset, itemName string) {
-	for num, orders := range ds {
-		idx := -1
-		for i, v := range orders {
-			if v == itemName {
-				idx = i
+func (dataset Dataset) RemoveItemPtr(itemPtr *Item) {
+	for i, _ := range dataset {
+		for j, ptr := range dataset[i].Items {
+			if ptr == itemPtr {
+				end := len(dataset[i].Items) - 1
+				dataset[i].Items[j], dataset[i].Items[end] = dataset[i].Items[end], dataset[i].Items[j]
+				dataset[i].Items = dataset[i].Items[:end]
 				break
 			}
 		}
-		if idx != -1 {
-			ds[num] = append(orders[:idx], orders[idx+1:]...)
-		}
 	}
 }
 
-func handleSupport(ds Dataset, spt float64) (headerTable ItemList, sptData SupportedData, total int, minSptc int) {
-	headerTable = make(ItemList, 0)
-	sptData = make(SupportedData, 0)
-	tempTable := make(ItemList, 0)
-	total = len(ds)
-	minSptc = int(float64(total) * spt)
-	for _, orderList := range ds {
-		for _, item := range orderList {
-			idx := tempTable.indexByName(item)
-			if idx == -1 {
-				tempTable = append(tempTable, &Item{item, 1, []*Node{}})
+func (node *FPNode) Insert(itemPtr *Item, supportCount int) (fpnode *FPNode, created bool) {
+	found := false
+	for _, son := range node.Sons {
+		if son.ItemPtr == itemPtr {
+			found = true
+			son.SupportCount += supportCount
+			fpnode = son
+			break
+		}
+	}
+	if !found {
+		fpnode = &FPNode{ItemPtr: itemPtr, Parent: node, SupportCount: supportCount}
+		node.Sons = append(node.Sons, fpnode)
+	}
+	created = !found
+	return
+}
+
+func (node *FPNode) Prefix() (list ItemList, supportCount int) {
+	supportCount = node.SupportCount
+	for cur := node; cur != nil && cur.ItemPtr != nil; cur = cur.Parent {
+		if node != cur {
+			list = append(ItemList{cur.ItemPtr}, list...)
+		}
+	}
+	return
+}
+
+func readData(filename string) (dataset Dataset, dataSize int, itemList ItemList) {
+	file, _ := os.Open(filename)
+	defer file.Close()
+	csvReader := csv.NewReader(file)
+	csvData, _ := csvReader.ReadAll()
+	attrs := csvData[0]
+	for _, record := range csvData[1:] {
+		data := &Data{Tid: record[0], SupportCount: 1}
+		for i, attr := range record[1:] {
+			itemPtr := itemList.Find(attrs[i+1], attr)
+			if itemPtr == nil {
+				itemPtr = &Item{AttrName: attrs[i+1], Value: attr}
+				itemList = append(itemList, itemPtr)
+			}
+			data.Items = append(data.Items, itemPtr)
+		}
+		dataset = append(dataset, data)
+	}
+	dataSize = len(dataset)
+	return
+}
+
+func constructFPTree(dataset Dataset, supportCount int) (fproot *FPNode, table HeaderTable) {
+	tempTable := make(HeaderTable, 0)
+	for _, data := range dataset {
+		for _, itemPtr := range data.Items {
+			if header := tempTable.Find(itemPtr); header == nil {
+				tempTable = append(tempTable, &Header{ItemPtr: itemPtr, SupportCount: data.SupportCount,})
 			} else {
-				item := tempTable[idx]
-				item.Count++
+				header.SupportCount += data.SupportCount
 			}
 		}
 	}
-	for _, link := range tempTable {
-		if link.Count < minSptc {
-			removeItem(ds, link.Name)
-		} else {
-			headerTable = append(headerTable, link)
+
+	for _, header := range tempTable {
+		if header.SupportCount >= supportCount {
+			table = append(table, header)
 		}
 	}
 
-	sort.Sort(headerTable)
-	for _, orders := range ds {
-		temp := make(ItemList, 0)
-		for _, item := range orders {
-			temp = append(temp, headerTable[headerTable.indexByName(item)])
-		}
-		if temp.Len() > 0 {
-			sort.Sort(sort.Reverse(temp))
-			sptData = append(sptData, temp)
-		}
-	}
-	return
-}
+	if len(table) > 0 {
+		fproot = &FPNode{}
 
-func freqtPatn(list ItemList, item string) (patterns []Patterns) {
-	_len := len(list)
-	n := int(math.Pow(2.0, float64(_len)))
-	for i := 1; i < n; i++ {
-		bin := strconv.FormatInt(int64(i), 2)
-		for zero := _len - len(bin); zero > 0; zero-- {
-			bin = "0" + bin
+		sort.Sort(table)
+		for _, header := range table {
+			header.ItemPtr._weight = table.IndexOf(header.ItemPtr)
 		}
-		temp := make([]string, 0)
-		minSup := -1
-		for j, b := range bin {
-			if string(b) == "1" {
-				if minSup == -1 || list[j].Count < minSup {
-					minSup = list[j].Count
-				}
-				temp = append(temp, list[j].Name)
-			}
-		}
-		temp = append(temp, item)
-		patterns = append(patterns, Patterns{
-			Support: minSup,
-			Item:    temp,
-		})
-	}
-	return patterns
-}
 
-func mining(headTable ItemList, minSup int) (patterns []Patterns) {
-	patterns = make([]Patterns, 0)
-	for _, item := range headTable {
-		temp := Node{Item: nil, Number: 0, Sons: []*Node{}}
-		pattern := make([]ItemList, 0)
-		for _, link := range item.Links {
-			nodes := ItemList{link.Item}
-			for link.Parent != nil {
-				link = link.Parent
-				if link.Item != nil {
-					nodes = append(append(ItemList{}, link.Item), nodes...)
-				}
-			}
-			temp.fpTreeAppend(ItemList{}, false, nodes...)
-		}
-		temp.fpTreeLeafPath(&pattern)
-
-		// handle minSupport
-		for i, pat := range pattern {
-			idx := len(pat)
-			for j, node := range pat[1:] {
-				if node.Count < minSup {
-					idx = j
-					break
-				}
-			}
-			pattern[i] = pat[1:idx]
-			for _, p := range freqtPatn(pattern[i], item.Name) {
-				addFlag := true
-				for k, _ := range patterns {
-					if reflect.DeepEqual(patterns[k].Item, p.Item) {
-						patterns[k].Support += p.Support
-						addFlag = false
-						break
+		for _, data := range dataset {
+			cur := fproot
+			sort.Sort(sort.Reverse(data.Items))
+			for _, itemPtr := range data.Items {
+				if header := table.Find(itemPtr); header != nil {
+					node, created := cur.Insert(itemPtr, data.SupportCount)
+					if created {
+						header.Nodes = append(header.Nodes, node)
 					}
-				}
-				if addFlag {
-					patterns = append(patterns, p)
+					cur = node
 				}
 			}
 		}
 	}
+
 	return
+}
+
+func mineFPTree(table HeaderTable, minSupportCount int, prefix ItemList, frequentItemSet *Dataset) {
+	for _, header := range table {
+		newPrefix := append(append(ItemList{}, prefix...), header.ItemPtr)
+		*frequentItemSet = append(*frequentItemSet, &Data{Items: newPrefix, SupportCount: header.SupportCount})
+		conditionPatternBases := Dataset{}
+		for _, node := range header.Nodes {
+			pattern, count := node.Prefix()
+			conditionPatternBases = append(conditionPatternBases, &Data{Items: pattern, SupportCount: count,})
+		}
+		conditionFPTree, conditionHeaderTable := constructFPTree(conditionPatternBases, minSupportCount)
+		if conditionFPTree != nil && len(conditionHeaderTable) > 0 {
+			mineFPTree(conditionHeaderTable, minSupportCount, newPrefix, frequentItemSet)
+		}
+	}
 }
 
 func main() {
-	root := Node{Item: nil, Number: 0, Sons: []*Node{}}
-	dataset := make(Dataset)
-	file, err := ioutil.ReadFile("dataset.json")
-	if err != nil {
-		log.Fatalln("Unable to read dataset.json", err)
+	minSupport := 0.7
+	dataset, dataSize, _ := readData("zoo.csv")
+	minSupportCount := int(float64(dataSize) * minSupport)
+	_, headerTable := constructFPTree(dataset, minSupportCount)
+	frequentItemSet := &Dataset{}
+	mineFPTree(headerTable, minSupportCount, ItemList{}, frequentItemSet)
+	fmt.Printf("Data Size: %d\n", dataSize)
+	fmt.Printf("Minimal SupportCount: %.f\n", minSupport)
+	fmt.Printf("Minimal SupportCount Count: %d\n", minSupportCount)
+	fmt.Println("Frequent Itemset:")
+	for i, data := range *frequentItemSet {
+		fmt.Print(i+1, "\t")
+		for _, itemPtr := range data.Items {
+			fmt.Printf("%s=%s ", itemPtr.AttrName, itemPtr.Value)
+		}
+		fmt.Printf("(Support Count: %d)\n", data.SupportCount)
 	}
-	json.Unmarshal(file, &dataset)
-
-	log.Println("Handle Support...")
-	minSupport := 0.2
-	headTable, sptDS, _, minSup := handleSupport(dataset, minSupport)
-
-	log.Println("Construct FP-Tree...")
-	for _, val := range sptDS {
-		root.fpTreeAppend(headTable, true, val...)
-	}
-
-	log.Println("FP-Tree Mining...")
-	patterns := mining(headTable, minSup)
-
-	log.Println("Write File...")
-	jbyte, err := json.MarshalIndent(patterns, "    ", "    ")
-	ioutil.WriteFile("result.json", jbyte, 644)
 }
