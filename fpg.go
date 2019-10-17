@@ -91,19 +91,6 @@ func (list HeaderTable) IndexOf(itemPtr *Item) int {
 	return -1
 }
 
-func (dataset Dataset) RemoveItemPtr(itemPtr *Item) {
-	for i, _ := range dataset {
-		for j, ptr := range dataset[i].Items {
-			if ptr == itemPtr {
-				end := len(dataset[i].Items) - 1
-				dataset[i].Items[j], dataset[i].Items[end] = dataset[i].Items[end], dataset[i].Items[j]
-				dataset[i].Items = dataset[i].Items[:end]
-				break
-			}
-		}
-	}
-}
-
 func (node *FPNode) Insert(itemPtr *Item, supportCount int) (fpnode *FPNode, created bool) {
 	found := false
 	for _, son := range node.Sons {
