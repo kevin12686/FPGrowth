@@ -40,6 +40,14 @@ type FPNode struct {
 
 type FPNodes []*FPNode
 
+type Rule struct {
+	Base       *Data
+	Candidate  *Data
+	Confidence float64
+}
+
+type Rules []*Rule
+
 func (list ItemList) Len() int {
 	return len(list)
 }
@@ -59,6 +67,62 @@ func (list ItemList) Find(attrName string, value string) *Item {
 		}
 	}
 	return nil
+}
+
+func (list ItemList) EqualTo(otherList ItemList) bool {
+	if length := len(list); length == len(otherList) {
+		tempList := append(ItemList{}, list...)
+		for _, itemPtr := range otherList {
+			found := false
+			for _, tempPtr := range tempList {
+				if itemPtr == tempPtr {
+					found = true
+					break
+				}
+			}
+			if !found {
+				tempList = append(tempList, itemPtr)
+			}
+		}
+		if length == len(tempList) {
+			return true
+		} else {
+			return false
+		}
+	} else {
+		return false
+	}
+}
+
+func (list ItemList) SupportCount(dataset Dataset) (support int) {
+	length := len(list)
+	for _, data := range dataset {
+		sum := 0
+		for _, itemPtr := range data.Items {
+			for _, confItem := range list {
+				if itemPtr == confItem {
+					sum++
+				}
+			}
+			if sum == length {
+				support++
+				break
+			}
+		}
+	}
+	return
+}
+
+func (list Dataset) Len() int {
+	return len(list)
+}
+
+func (list Dataset) Less(i, j int) bool {
+	return list[i].SupportCount < list[j].SupportCount
+}
+
+func (list Dataset) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
 }
 
 func (list HeaderTable) Len() int {
@@ -117,6 +181,31 @@ func (node *FPNode) Prefix() (list ItemList, supportCount int) {
 		}
 	}
 	return
+}
+
+func (list Rules) Len() int {
+	return len(list)
+}
+
+func (list Rules) Less(i, j int) bool {
+	return list[i].Confidence < list[j].Confidence
+}
+
+func (list Rules) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+
+func (list Rules) IndexOf(rule *Rule) int {
+	for i, r := range list {
+		if r.Confidence != rule.Confidence || r.Base.SupportCount != rule.Base.SupportCount || r.Candidate.SupportCount != rule.Candidate.SupportCount {
+			continue
+		} else {
+			if r.Base.Items.EqualTo(rule.Base.Items) && r.Candidate.Items.EqualTo(rule.Candidate.Items) {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func readData(filename string) (dataset Dataset, dataSize int, itemList ItemList) {
@@ -201,22 +290,63 @@ func mineFPTree(table HeaderTable, minSupportCount int, prefix ItemList, frequen
 	}
 }
 
+func generateRules(dataset Dataset, supportCount int, frequentItem ItemList, subset ItemList, minConfidence float64, rules *Rules) {
+	for i, _ := range frequentItem {
+		newFrequentItem := append(ItemList{}, frequentItem[:i]...)
+		newFrequentItem = append(newFrequentItem, frequentItem[i+1:]...)
+		newSubset := append(subset, frequentItem[i])
+		newSupportCount := newFrequentItem.SupportCount(dataset)
+		confidence := float64(supportCount) / float64(newSupportCount)
+		if confidence >= minConfidence {
+			rule := &Rule{Base: &Data{Items: newFrequentItem, SupportCount: newSupportCount},
+				Candidate:  &Data{Items: newSubset, SupportCount: supportCount,},
+				Confidence: confidence}
+			if rules.IndexOf(rule) == -1 {
+				*rules = append(*rules, rule)
+			}
+			if len(newFrequentItem) > 1 {
+				generateRules(dataset, supportCount, newFrequentItem, newSubset, minConfidence, rules)
+			}
+		}
+	}
+}
+
 func main() {
 	minSupport := 0.7
+	minConfidence := 0.935
 	dataset, dataSize, _ := readData("zoo.csv")
 	minSupportCount := int(float64(dataSize) * minSupport)
 	_, headerTable := constructFPTree(dataset, minSupportCount)
 	frequentItemSet := &Dataset{}
 	mineFPTree(headerTable, minSupportCount, ItemList{}, frequentItemSet)
+	sort.Sort(sort.Reverse(frequentItemSet))
 	fmt.Printf("Data Size: %d\n", dataSize)
 	fmt.Printf("Minimal SupportCount: %.f\n", minSupport)
 	fmt.Printf("Minimal SupportCount Count: %d\n", minSupportCount)
-	fmt.Println("Frequent Itemset:")
+	fmt.Println("\nFrequent Itemset:")
 	for i, data := range *frequentItemSet {
 		fmt.Print(i+1, "\t")
 		for _, itemPtr := range data.Items {
 			fmt.Printf("%s=%s ", itemPtr.AttrName, itemPtr.Value)
 		}
 		fmt.Printf("(Support Count: %d)\n", data.SupportCount)
+	}
+
+	rules := &Rules{}
+	for _, frequentItem := range *frequentItemSet {
+		generateRules(dataset, frequentItem.SupportCount, frequentItem.Items, ItemList{}, minConfidence, rules)
+	}
+	sort.Sort(sort.Reverse(rules))
+	fmt.Println("\nRules:")
+	for i, rule := range *rules {
+		fmt.Printf("%d\t", i+1)
+		for _, itemPtr := range rule.Base.Items {
+			fmt.Printf("%s=%s ", itemPtr.AttrName, itemPtr.Value)
+		}
+		fmt.Printf("%d ==> ", rule.Base.SupportCount)
+		for _, itemPtr := range rule.Candidate.Items {
+			fmt.Printf("%s=%s ", itemPtr.AttrName, itemPtr.Value)
+		}
+		fmt.Printf("%d (Confidence: %.2f)\n", rule.Candidate.SupportCount, rule.Confidence)
 	}
 }
