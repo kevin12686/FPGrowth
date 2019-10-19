@@ -291,20 +291,20 @@ func mineFPTree(table HeaderTable, minSupportCount int, prefix ItemList, frequen
 }
 
 func generateRules(dataset Dataset, supportCount int, frequentItem ItemList, subset ItemList, minConfidence float64, rules *Rules) {
-	for i, _ := range frequentItem {
-		newFrequentItem := append(ItemList{}, frequentItem[:i]...)
-		newFrequentItem = append(newFrequentItem, frequentItem[i+1:]...)
-		newSubset := append(subset, frequentItem[i])
-		newSupportCount := newFrequentItem.SupportCount(dataset)
-		confidence := float64(supportCount) / float64(newSupportCount)
-		if confidence >= minConfidence {
-			rule := &Rule{Base: &Data{Items: newFrequentItem, SupportCount: newSupportCount},
-				Candidate:  &Data{Items: newSubset, SupportCount: supportCount,},
-				Confidence: confidence}
-			if rules.IndexOf(rule) == -1 {
-				*rules = append(*rules, rule)
-			}
-			if len(newFrequentItem) > 1 {
+	if len(frequentItem) > 1 {
+		for i, _ := range frequentItem {
+			newFrequentItem := append(ItemList{}, frequentItem[:i]...)
+			newFrequentItem = append(newFrequentItem, frequentItem[i+1:]...)
+			newSubset := append(subset, frequentItem[i])
+			newSupportCount := newFrequentItem.SupportCount(dataset)
+			confidence := float64(supportCount) / float64(newSupportCount)
+			if confidence >= minConfidence {
+				rule := &Rule{Base: &Data{Items: newFrequentItem, SupportCount: newSupportCount},
+					Candidate:  &Data{Items: newSubset, SupportCount: supportCount,},
+					Confidence: confidence}
+				if rules.IndexOf(rule) == -1 {
+					*rules = append(*rules, rule)
+				}
 				generateRules(dataset, supportCount, newFrequentItem, newSubset, minConfidence, rules)
 			}
 		}
@@ -312,9 +312,9 @@ func generateRules(dataset Dataset, supportCount int, frequentItem ItemList, sub
 }
 
 func main() {
-	minSupport := 0.7
-	minConfidence := 0.935
-	dataset, dataSize, _ := readData("zoo.csv")
+	minSupport := 0.1
+	minConfidence := 0.3
+	dataset, dataSize, _ := readData("car.csv")
 	minSupportCount := int(float64(dataSize) * minSupport)
 	_, headerTable := constructFPTree(dataset, minSupportCount)
 	frequentItemSet := &Dataset{}
