@@ -312,17 +312,18 @@ func generateRules(dataset Dataset, supportCount int, frequentItem ItemList, sub
 }
 
 func main() {
-	minSupport := 0.1
-	minConfidence := 0.3
-	dataset, dataSize, _ := readData("car.csv")
+	minSupport := 0.7
+	minConfidence := 0.935
+	dataset, dataSize, _ := readData("zoo.csv")
 	minSupportCount := int(float64(dataSize) * minSupport)
 	_, headerTable := constructFPTree(dataset, minSupportCount)
 	frequentItemSet := &Dataset{}
 	mineFPTree(headerTable, minSupportCount, ItemList{}, frequentItemSet)
 	sort.Sort(sort.Reverse(frequentItemSet))
 	fmt.Printf("Data Size: %d\n", dataSize)
-	fmt.Printf("Minimal SupportCount: %.f\n", minSupport)
-	fmt.Printf("Minimal SupportCount Count: %d\n", minSupportCount)
+	fmt.Printf("Minimal Support: %.2f\n", minSupport)
+	fmt.Printf("Minimal Support Count: %d\n", minSupportCount)
+	fmt.Printf("Minimal Confidence: %.2f\n", minConfidence)
 	fmt.Println("\nFrequent Itemset:")
 	for i, data := range *frequentItemSet {
 		fmt.Print(i+1, "\t")
